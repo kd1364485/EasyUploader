@@ -1,15 +1,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
+use std::sync::Mutex;
 use ignore::Walk;
 use serde::{Deserialize, Serialize};
+use once_cell::sync::Lazy;
+use rayon::prelude::*;
 
 #[derive(Deserialize, Serialize)]
 struct ExtensionsConfig {
     text_extensions: Vec<String>,
 }
 
-fn load_extensions() -> Vec<String> {
+// 拡張子リストのキャッシュ
+static EXTENSIONS_CACHE: Lazy<Mutex<Vec<String>>> = Lazy::new(|| {
+    Mutex::new(load_extensions_from_file())
+});
+
+fn load_extensions_from_file() -> Vec<String> {
     let config_path = PathBuf::from("extensions.json");
     
     if let Ok(content) = fs::read_to_string(&config_path) {
@@ -28,15 +36,19 @@ fn load_extensions() -> Vec<String> {
     ].iter().map(|s| s.to_string()).collect()
 }
 
+fn get_extensions_cached() -> Vec<String> {
+    EXTENSIONS_CACHE.lock().unwrap().clone()
+}
+
 #[tauri::command]
 fn get_extensions() -> Vec<String> {
-    load_extensions()
+    get_extensions_cached()
 }
 
 #[tauri::command]
 fn save_extensions(extensions: Vec<String>) -> Result<(), String> {
     let config = ExtensionsConfig {
-        text_extensions: extensions,
+        text_extensions: extensions.clone(),
     };
     
     let json_content = serde_json::to_string_pretty(&config)
@@ -44,6 +56,9 @@ fn save_extensions(extensions: Vec<String>) -> Result<(), String> {
     
     fs::write("extensions.json", json_content)
         .map_err(|e| format!("ファイル書き込みエラー: {}", e))?;
+    
+    // キャッシュを更新
+    *EXTENSIONS_CACHE.lock().unwrap() = extensions;
     
     Ok(())
 }
@@ -55,7 +70,7 @@ fn greet(name: &str) -> String {
 }
 
 fn is_text_file(path: &Path) -> bool {
-    let extensions = load_extensions();
+    let extensions = get_extensions_cached();
     
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -73,8 +88,36 @@ fn should_exclude_directory(dir_name: &str) -> bool {
     EXCLUDED_DIRS.contains(&dir_name)
 }
 
-fn generate_file_tree(source_path: &Path) -> Result<String, String> {
-    let mut files: Vec<String> = Vec::new();
+fn read_file_safely(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    
+    let mut file = fs::File::open(path)
+        .map_err(|e| format!("ファイルオープンエラー: {}", e))?;
+    
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)
+        .map_err(|e| format!("ファイル読み込みエラー: {}", e))?;
+    
+    // UTF-8検証
+    std::str::from_utf8(&buffer)
+        .map_err(|_| "ファイルはUTF-8エンコーディングではありません（バイナリファイルの可能性があります）".to_string())?;
+    
+    // UTF-8文字列に変換
+    String::from_utf8(buffer)
+        .map_err(|e| format!("UTF-8変換エラー: {}", e))
+}
+
+// ファイル情報を保持する構造体
+#[derive(Clone)]
+struct FileInfo {
+    relative_path: String,
+    full_path: PathBuf,
+    extension: String,
+}
+
+// ディレクトリを1回だけ走査してファイル情報を収集
+fn collect_files(source_path: &Path) -> Result<Vec<FileInfo>, String> {
+    let mut files: Vec<FileInfo> = Vec::new();
     let walker = Walk::new(source_path);
     
     for result in walker {
@@ -106,12 +149,27 @@ fn generate_file_tree(source_path: &Path) -> Result<String, String> {
         
         // Windowsのパス区切り文字をスラッシュに変換
         let normalized = path_str.replace('\\', "/");
-        files.push(normalized);
+        
+        let extension = entry_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        
+        files.push(FileInfo {
+            relative_path: normalized,
+            full_path: entry_path,
+            extension,
+        });
     }
     
-    println!("収集したファイル数: {}", files.len());
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     
-    files.sort();
+    Ok(files)
+}
+
+fn generate_file_tree(files: &[FileInfo]) -> Result<String, String> {
+    println!("収集したファイル数: {}", files.len());
     
     // ツリー文字列を生成
     let mut output = String::from("■ Project Structure\n\n");
@@ -119,8 +177,8 @@ fn generate_file_tree(source_path: &Path) -> Result<String, String> {
     // シンプルなツリー出力
     let mut last_dir: Option<String> = None;
     
-    for file in &files {
-        let parts: Vec<&str> = file.split('/').collect();
+    for file in files {
+        let parts: Vec<&str> = file.relative_path.split('/').collect();
         
         if parts.len() > 1 {
             let dir = parts[..parts.len()-1].join("/");
@@ -135,33 +193,19 @@ fn generate_file_tree(source_path: &Path) -> Result<String, String> {
             output.push_str(&format!("  {}\n", filename));
         } else {
             // ルートのファイル
-            output.push_str(&format!("{}\n", file));
+            output.push_str(&format!("{}\n", file.relative_path));
         }
     }
     
     Ok(output)
 }
 
-fn generate_project_overview(source_path: &Path) -> Result<String, String> {
+fn generate_project_overview(source_path: &Path, files: &[FileInfo]) -> Result<String, String> {
     let mut tech_stack: Vec<String> = Vec::new();
     let mut file_counts: HashMap<String, usize> = HashMap::new();
-    let walker = Walk::new(source_path);
     
-    for result in walker {
-        let entry = result.map_err(|e| format!("ディレクトリ走査エラー: {}", e))?;
-        let entry_path = entry.path().to_path_buf();
-        
-        if entry_path.is_dir() {
-            continue;
-        }
-        
-        if !is_text_file(&entry_path) {
-            continue;
-        }
-        
-        if let Some(ext) = entry_path.extension().and_then(|e| e.to_str()) {
-            *file_counts.entry(ext.to_string()).or_insert(0) += 1;
-        }
+    for file in files {
+        *file_counts.entry(file.extension.clone()).or_insert(0) += 1;
     }
     
     // テックスタックを推測
@@ -247,9 +291,12 @@ fn generate_markdown(path: &str) -> Result<String, String> {
     fs::create_dir_all(&output_dir)
         .map_err(|e| format!("EasyUploaderディレクトリ作成エラー: {}", e))?;
     
+    // ファイルを1回だけ収集
+    let files = collect_files(source_path)?;
+    
     // README（プロジェクト概要とファイルツリー）を生成
-    let file_tree = generate_file_tree(source_path)?;
-    let project_overview = generate_project_overview(source_path)?;
+    let file_tree = generate_file_tree(&files)?;
+    let project_overview = generate_project_overview(source_path, &files)?;
     
     // 全体のREADMEファイルを作成
     let readme_filename = format!("{}_README.txt", folder_name);
@@ -265,58 +312,35 @@ fn generate_markdown(path: &str) -> Result<String, String> {
     readme_content.push_str("The source code has been split into multiple files for easier AI analysis.\n\n");
     
     // ディレクトリごとにファイルをグループ化
-    let mut dir_groups: std::collections::HashMap<String, Vec<(String, PathBuf)>> = std::collections::HashMap::new();
-    let mut root_files: Vec<(String, PathBuf)> = Vec::new();
+    let mut dir_groups: std::collections::HashMap<String, Vec<FileInfo>> = std::collections::HashMap::new();
+    let mut root_files: Vec<FileInfo> = Vec::new();
     
-    let walker = Walk::new(source_path);
-    
-    for result in walker {
-        let entry = result.map_err(|e| format!("ディレクトリ走査エラー: {}", e))?;
-        let entry_path = entry.path().to_path_buf();
-        
-        // ディレクトリの除外チェック
-        if entry_path.is_dir() {
-            if let Some(dir_name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                if should_exclude_directory(dir_name) {
-                    continue;
-                }
-            }
-            continue;
-        }
-        
-        // テキストファイルのみを対象にする
-        if !is_text_file(&entry_path) {
-            continue;
-        }
-        
-        let relative_path = entry_path
-            .strip_prefix(source_path)
-            .map_err(|e| format!("相対パス計算エラー: {}", e))?;
-        
-        let path_str = relative_path
-            .to_str()
-            .ok_or("パス文字列変換エラー")?;
-        
-        // Windowsのパス区切り文字をスラッシュに変換
-        let normalized_path = path_str.replace("\\\\", "/");
-        
-        let parts: Vec<&str> = normalized_path.split('/').collect();
+    for file in &files {
+        let parts: Vec<&str> = file.relative_path.split('/').collect();
         
         if parts.len() > 1 {
             // ディレクトリ内のファイル
             let top_dir = parts[0];
             dir_groups.entry(top_dir.to_string())
                 .or_insert_with(Vec::new)
-                .push((normalized_path, entry_path));
+                .push(file.clone());
         } else {
             // ルートのファイル
-            root_files.push((normalized_path, entry_path));
+            root_files.push(file.clone());
         }
     }
     
     // ルートファイル用のMarkdownを作成（行数制限で分割）
     let mut total_output_files: usize = 0;
     if !root_files.is_empty() {
+        // 並列でファイルを読み込み
+        let root_file_contents: Vec<(String, Result<String, String>)> = root_files
+            .par_iter()
+            .map(|file| {
+                (file.relative_path.clone(), read_file_safely(&file.full_path))
+            })
+            .collect();
+        
         let mut root_file_index = 1;
         let mut current_lines = 0;
         const MAX_LINES_PER_FILE: usize = 5000; // 5000行ごとに分割
@@ -324,9 +348,14 @@ fn generate_markdown(path: &str) -> Result<String, String> {
         let mut root_content = String::new();
         root_content.push_str("■ Root Files\n\n");
         
-        for (normalized_path, entry_path) in &root_files {
-            let content = fs::read_to_string(entry_path)
-                .map_err(|e| format!("ファイル読み込みエラー {}: {}", normalized_path, e))?;
+        for (relative_path, content_result) in root_file_contents {
+            let content = match content_result {
+                Ok(c) => c,
+                Err(e) => {
+                    println!("スキップ: {} ({})", relative_path, e);
+                    continue;
+                }
+            };
             
             let file_lines = content.lines().count();
             
@@ -349,7 +378,7 @@ fn generate_markdown(path: &str) -> Result<String, String> {
                 root_content.push_str("■ Root Files\n\n");
             }
             
-            root_content.push_str(&format!("■ File: {}\n\n", normalized_path));
+            root_content.push_str(&format!("■ File: {}\n\n", relative_path));
             root_content.push_str(&content);
             root_content.push_str("\n\n");
             
@@ -378,6 +407,14 @@ fn generate_markdown(path: &str) -> Result<String, String> {
     
     for dir_name in &dir_names {
         if let Some(files) = dir_groups.get(dir_name) {
+            // 並列でファイルを読み込み
+            let dir_file_contents: Vec<(String, Result<String, String>)> = files
+                .par_iter()
+                .map(|file| {
+                    (file.relative_path.clone(), read_file_safely(&file.full_path))
+                })
+                .collect();
+            
             let mut dir_file_index = 1;
             let mut current_lines = 0;
             const MAX_LINES_PER_FILE: usize = 5000; // 5000行ごとに分割
@@ -385,9 +422,14 @@ fn generate_markdown(path: &str) -> Result<String, String> {
             let mut dir_content = String::new();
             dir_content.push_str(&format!("■ Directory: {}\n\n", dir_name));
             
-            for (normalized_path, entry_path) in files {
-                let content = fs::read_to_string(entry_path)
-                    .map_err(|e| format!("ファイル読み込みエラー {}: {}", normalized_path, e))?;
+            for (relative_path, content_result) in dir_file_contents {
+                let content = match content_result {
+                    Ok(c) => c,
+                    Err(e) => {
+                        println!("スキップ: {} ({})", relative_path, e);
+                        continue;
+                    }
+                };
                 
                 let file_lines = content.lines().count();
                 
@@ -410,7 +452,7 @@ fn generate_markdown(path: &str) -> Result<String, String> {
                     dir_content.push_str(&format!("■ Directory: {}\n\n", dir_name));
                 }
                 
-                dir_content.push_str(&format!("■ File: {}\n\n", normalized_path));
+                dir_content.push_str(&format!("■ File: {}\n\n", relative_path));
                 dir_content.push_str(&content);
                 dir_content.push_str("\n\n");
                 
