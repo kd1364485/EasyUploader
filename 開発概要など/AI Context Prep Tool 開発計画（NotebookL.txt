@@ -1,0 +1,13 @@
+AI Context Prep Tool 開発計画（NotebookLM用まとめ） プロジェクト概要 仮タイトル AI Context Prep Tool コンセプト AI（NotebookLM / ChatGPT / Claude / Gemini 等）へコードベースを投入しやすくするための、ローカル完結型ツール。 解決したい課題 NotebookLMへ大量のコードファイルを投入する際、 ファイルを大量選択するのが面倒 不要ファイル（node_modules 等）が混ざる zip作成が手間 AIに不要なファイルが多い プロジェクト構造が把握しづらい などの問題がある。 これを、 「数クリックでAI投入用zipを作れる」 状態にする。 開発方針 最重要方針 「小さく完成させる」 最初から高機能化しない。 まずは： 実際に自分で使える NotebookLM投入が楽になる ことを優先する。 MVP（最初の完成目標） Version 0.1 実装する機能
+フォルダ選択 ユーザーがプロジェクトフォルダを選択できる。
+コードファイル収集 対象拡張子： .js .ts .tsx .jsx .py .c .cpp .h .hpp .java .rs .go .html .css .json .md など。
+除外処理 自動除外： node_modules .git dist build binary files など。
+.gitignore対応 .gitignore を読み取って除外。 これは価値が高い。
+zip生成 NotebookLM投入用zipを生成。
+ファイル一覧生成 例： Plain text Project Structure
+src/ main.ts App.tsx components/ Header.tsx 7. README自動生成 AI向け説明文を自動生成。 例： Markdown
+Project Overview
+This project contains:
+React frontend
+API utilities
+Components 非目標（今やらないこと） 以下は後回し。 ログイン クラウド保存 サーバー機能 課金 AI自動解析 ベクトルDB RAG チーム共有 Web版 まずはローカル完結。 技術構成 推奨スタック フロント React TypeScript UI Tailwind CSS デスクトップ化 Tauri 言語 TypeScript + Rust（必要最低限） なぜTauriを選ぶか 理由 軽量 配布サイズ小さい ローカルファイル操作に強い サーバー不要 無料 Electronより軽い 開発環境 推奨 エディタ Cursor または： VSCode + Cline AI活用方針 AIに任せるもの UI生成 boilerplate Tailwind TypeScript補助 エラー調査 リファクタリング 自分で理解するもの ディレクトリ構造 ファイル操作 アプリ全体設計 データの流れ バグ原因 開発ステップ Phase 1 — 環境構築（1〜2日） やること Node.js導入 Rust導入 Tauriセットアップ Cursor導入 GitHub作成 完了条件 Tauriアプリが起動する Phase 2 — 最低限UI（1〜2日） やること フォルダ選択ボタン 選択パス表示 「zip生成」ボタン 完了条件 UIが動く Phase 3 — ファイル収集（2〜4日） やること ディレクトリ走査 拡張子判定 除外処理 .gitignore対応 完了条件 必要ファイルだけ取得できる Phase 4 — zip生成（1〜2日） やること zip作成 保存先選択 完了条件 NotebookLMへ投入可能なzip生成 Phase 5 — README生成（1〜2日） やること ファイル構造出力 簡易README生成 完了条件 AIに構造説明できる Phase 6 — 自分で使う（超重要） やること 実際に： 自分のコード GitHubプロジェクト 学習用コード をNotebookLMへ投入。 チェック項目 面倒が減ったか？ 欲しい機能は？ 何が邪魔か？ 想定スケジュール 理想 Week 1 環境構築 + UI Week 2 ファイル収集 + zip生成 Week 3 README生成 + 改善 Week 4 GitHub公開 GitHub公開目標 最初の目標 「完成度」より： 動く 使える 公開されている を優先。 将来的な拡張案 v0.2 トークン数表示 大容量分割 AI向け圧縮 不要コード自動除外 v0.3 NotebookLM最適化 Claude向け最適化 Cursor向け最適化 v1.0 AIコードマップ生成 関数一覧生成 依存関係解析 コード要約 重要な考え方 完璧主義を避ける 最初は： 「自分が便利」 だけで十分。 技術学習より完成優先 学習目的になりすぎると終わらない。 「まず動かす」。 AIを使い倒す AI時代は： 全部暗記する より AIを活用して高速開発 が重要。 このプロジェクトで得られるもの React経験 TypeScript経験 Tauri経験 Rust入門 AI活用開発経験 GitHub実績 ポートフォリオ 個人開発経験 最終目標 まずは： 「自分が毎日使いたいツール」 にする。 その後： GitHub公開 Reddit投稿 Zenn記事 技術ブログ などへ発展できる。
