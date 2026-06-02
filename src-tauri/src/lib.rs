@@ -276,7 +276,7 @@ fn generate_markdown(path: &str) -> Result<String, String> {
     if !source_path.exists() {
         return Err("指定されたパスが存在しません".to_string());
     }
-    
+    //パスからディレクトリのフォルダ名を取得
     let folder_name = source_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -330,7 +330,7 @@ fn generate_markdown(path: &str) -> Result<String, String> {
         }
     }
     
-    // ルートファイル用のMarkdownを作成（行数制限で分割）
+    // ルートファイル用のテキストを作成（行数制限で分割）
     let mut total_output_files: usize = 0;
     if !root_files.is_empty() {
         // 並列でファイルを読み込み
@@ -367,7 +367,7 @@ fn generate_markdown(path: &str) -> Result<String, String> {
                 let root_path = output_dir.join(&root_filename);
                 
                 fs::write(&root_path, root_content)
-                    .map_err(|e| format!("Root Markdownファイル書き込みエラー: {}", e))?;
+                    .map_err(|e| format!("Root テキストファイル書き込みエラー: {}", e))?;
                 
                 readme_content.push_str(&format!("- **Root files part {}**: {}\n", root_file_index, root_filename));
                 
@@ -393,7 +393,7 @@ fn generate_markdown(path: &str) -> Result<String, String> {
             let root_path = output_dir.join(&root_filename);
             
             fs::write(&root_path, root_content)
-                .map_err(|e| format!("Root Markdownファイル書き込みエラー: {}", e))?;
+                .map_err(|e| format!("Root テキストファイル書き込みエラー: {}", e))?;
             
             readme_content.push_str(&format!("- **Root files part {}**: {}\n", root_file_index, root_filename));
             
@@ -401,7 +401,7 @@ fn generate_markdown(path: &str) -> Result<String, String> {
         }
     }
     
-    // ディレクトリごとのMarkdownを作成（行数制限で分割）
+    // ディレクトリごとのテキストを作成（行数制限で分割）
     let mut dir_names: Vec<_> = dir_groups.keys().cloned().collect();
     dir_names.sort();
     
@@ -441,7 +441,7 @@ fn generate_markdown(path: &str) -> Result<String, String> {
                     let dir_path = output_dir.join(&dir_filename);
                     
                     fs::write(&dir_path, dir_content)
-                        .map_err(|e| format!("Directory Markdownファイル書き込みエラー: {}", e))?;
+                        .map_err(|e| format!("Directory テキストファイル書き込みエラー: {}", e))?;
                     
                     readme_content.push_str(&format!("- **{} part {}**: {}\n", dir_name, dir_file_index, dir_filename));
                     
