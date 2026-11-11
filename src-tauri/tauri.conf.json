@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "EasyUploader",
+  "productName": "OrginalNotebookLM",
   "version": "0.1.0",
-  "identifier": "com.seiya.easyuploader",
+  "identifier": "com.seiya.orginalnotebooklm",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "EasyUploader",
+        "title": "OrginalNotebookLM",
         "width": 800,
         "height": 600
       }
